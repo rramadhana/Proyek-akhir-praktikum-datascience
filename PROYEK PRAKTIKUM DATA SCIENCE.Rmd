@@ -1,0 +1,603 @@
+---
+title: "Project Data Science FIX Goal"
+author: "ray"
+date: "2022-11-28"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(e1071)
+library(caret)
+library(rtweet)
+library(twitteR)
+library(ROAuth)
+library(dplyr)
+library(tidyr)
+library(shiny) 
+library(syuzhet) 
+library(wordcloud2) 
+library(readr)
+library(tm)
+library(wordcloud)
+library(readr)
+library(vroom)
+
+```
+
+```{r}
+
+
+
+ token <- create_token(
+   app =  "projek-akhir-DS",
+   consumer_key = "DBHDF0qEC4dicam0mNEtEq8ff",
+   consumer_secret = "BbxW5rj19JB1NR116hJLBREGsQGUTPPen0PT0QjWltg3NLh4IH",
+   access_token = "1146605926264086528-zJ9NJUhBMahgiuwqt2oXRdhOQGr3za",
+   access_secret = "xpUoR0ZiT840uJ7NM5jEh24tuDYwF79qKKiwnC8hkkeCt"
+ )
+ 
+ 
+
+```
+
+```{r}
+keywoard<-"war ukraine russia"
+jumlah_tweet <- 2000
+type <- "recent"
+bahasa <- "en"
+
+retweet <- FALSE
+
+ perangwow <- search_tweets(
+   keywoard,
+   n= jumlah_tweet ,
+   include_rts = retweet ,
+   type = type,
+   lang = bahasa ,
+   retryonratelimit = FALSE
+ )
+ ukraine <- search_tweets(
+   "ukraine",
+   n= jumlah_tweet ,
+   include_rts = retweet ,
+   type = type,
+   lang = bahasa ,
+   retryonratelimit = FALSE
+ )
+ russia <- search_tweets(
+   "russia",
+   n= jumlah_tweet ,
+   include_rts = retweet ,
+   type = type,
+   lang = bahasa ,
+   retryonratelimit = FALSE
+ )
+
+write_csv(perangwow, "warrussiaukraine.csv")
+write_csv(ukraine, "ukraine.csv")
+write_csv(russia, "russia.csv")
+
+
+
+```
+
+
+```{r}
+warraw <- read.csv("warrussiaukraine.csv")
+ukraineraw <- read.csv("ukraine.csv")
+russiaraw <- read.csv("russia.csv")
+
+
+data_raw <- rbind(warraw,ukraineraw,russiaraw)
+write_csv(data_raw, "data-raw.csv")
+
+```
+
+```{r}
+wartweet <- read.csv("data-raw.csv")
+wartweet <- wartweet %>% select(text)
+wartweet
+
+kalimat2 <- wartweet
+
+#skoring
+positif <- scan("positiveword.txt",what="character",comment.char=";")
+negatif <- scan("negativeword.txt",what="character",comment.char=";")
+kata.positif = c(positif)
+kata.negatif = c(negatif)
+score.sentiment = function(kalimat2, kata.positif, kata.negatif, .progress='none')
+{
+  require(plyr)
+  require(stringr)
+  scores = laply(kalimat2, function(kalimat, kata.positif, kata.negatif) {
+
+    
+    list.kata = str_split(kalimat, '\\s+')
+    kata2 = unlist(list.kata)
+    positif.matches = match(kata2, kata.positif)
+    negatif.matches = match(kata2, kata.negatif)
+    positif.matches = !is.na(positif.matches)
+    negatif.matches = !is.na(negatif.matches)
+    score = sum(positif.matches) - (sum(negatif.matches))
+    return(score)
+  }, kata.positif, kata.negatif, .progress=.progress )
+  scores.df = data.frame(score=scores, text=kalimat2)
+  return(scores.df)
+}
+hasil = score.sentiment(kalimat2$text, kata.positif, kata.negatif)
+View(hasil)
+#CONVERT SCORE TO SENTIMENT
+hasil$polarity<- ifelse(hasil$score<0, "Negatif",ifelse(hasil$score==0,"Netral","Positif"))
+hasil$polarity
+View(hasil)
+#EXCHANGE ROW SEQUENCE
+data_labeling <- hasil[c(2,1,3)]
+View(data_labeling)
+write.csv(data_labeling, file = "Labeling war rvs.csv")
+
+```
+
+```{r}
+#menampilkan tweet yang di scrapping
+wartweet <- read.csv("Labeling war rvs.csv")
+wartweet
+temp <- wartweet$text
+data <- Corpus(VectorSource(temp))
+#pembersihan rtweet
+removeRT <- function(y) gsub("RT ", "", y)
+twitclean <- tm_map(data, removeRT)
+#mengubah huruf kecil 
+twitclean <- tm_map(twitclean, tolower) 
+##pembersihan URL
+removeURL <- function(x) gsub("http[^[:space:]]*",  "", x)
+twitclean <- tm_map(twitclean, removeURL)
+##pembersihan newline
+removeNL <- function(y) gsub("\n", " ", y)
+twitclean <- tm_map(twitclean, removeNL)
+#pembersihan pipe
+removepipe <- function(z) gsub("<[^>]+>", "", z)
+twitclean <- tm_map(twitclean, removepipe)
+#pembersihan Mention
+removeUN <- function(z) gsub("@\\S+", "", z)
+twitclean <- tm_map(twitclean, removeUN)
+#pembersihan hastag
+removeHS <- function(z) gsub("#\\S+", "", z)
+twitclean <- tm_map(twitclean, removeHS)
+#pembersihan &amp
+removeamp <- function(y) gsub("&amp;", "", y)
+twitclean <- tm_map(twitclean, removeamp)
+#pembersihan tanda baca
+twitclean <- tm_map(twitclean, removePunctuation) 
+#stopwords
+myStopwords <- readLines("stopwords-en.csv", warn = FALSE)
+twitclean <- tm_map(twitclean,removeWords,myStopwords)
+#pembersihan spasi dll
+remove.all <- function(xy) gsub("[^[:alpha:][:space:]]*", "", xy)
+twitclean <- tm_map(twitclean,remove.all)
+
+twitclean<-twitclean %>%
+    tm_map(removeWords,stopwords(kind="en"))%>%
+    tm_map(stripWhitespace)
+inspect(twitclean[1:10])
+
+
+try.error = function(x)
+{
+  y = NA
+  try_error = tryCatch(tolower(x), error=function(e) e)
+  if (!inherits(try_error, "error"))
+    y = tolower(x)
+  return(y)
+}
+
+twitclean = sapply(twitclean, try.error)
+# mengahapus missing value
+twitclean = twitclean[!is.na(twitclean)]
+names(twitclean) = NULL
+
+# membersihkan data-data yang masiih duplicate
+dataclean<-data.frame(text=unlist(sapply(twitclean, `[`)), stringsAsFactors=F)
+ambil <- wartweet %>% select(score,polarity)
+gabung <- cbind(dataclean,ambil)
+write.csv(gabung,'dataclean.csv')
+
+dupli<-read.csv("dataclean.csv",header = TRUE)
+dupli<-dupli[!duplicated(dupli[,c("text")]),]
+View(dupli)
+write.csv(dupli,'dataclean.csv')
+```
+
+```{r}
+
+dff<-read.csv("dataclean.csv")
+
+jumtes <- round(length(dff$text) * (25/100))
+jumtrain <- round(length(dff$text) * (75/100))
+jumtes
+jumtrain
+totaldata<-length(dff$text)
+totaldata
+```
+
+```{r}
+data_labelled <- read.csv("dataclean.csv")
+data_labelled$polarity <- factor(data_labelled$polarity)
+
+
+table(data_labelled$polarity)
+
+
+
+```
+
+```{r}
+data_corpus <- VCorpus(VectorSource(data_labelled$text))
+data_dtm <- DocumentTermMatrix(data_corpus, control = list(
+  tolower = TRUE,
+  removeNumbers = TRUE,
+  stopwords = TRUE,
+  removePunctuation = TRUE,
+  stemming = TRUE
+))
+
+# membuat data training  dan testing
+data_dtm_train <- data_dtm[1:jumtrain, ]
+data_dtm_test  <- data_dtm[(jumtrain+1):total, ]
+
+  #membuat data  train dan tes polarity
+data_train_labels_pol <- data_labelled[1:jumtrain, ]$polarity
+data_test_labels_pol  <- data_labelled[(jumtrain+1):total, ]$polarity
+
+# check that the proportion of spam is similar
+
+prop.table(table(data_train_labels_pol))
+
+
+```
+
+```{r}
+rm(data_dtm_train)
+rm(data_dtm_test)
+rm(data_train_labels_score)
+rm(data_test_labels_score)
+
+# membuat random sample
+set.seed(123)
+train_index <- sample(total, jumtrain)
+
+data_train <- data_labelled[-train_index, ]
+data_test  <- data_labelled[train_index, ]
+
+#mengecek prop per class
+prop.table(table(data_train$score))
+prop.table(table(data_train$polarity))
+
+train_corpus <- VCorpus(VectorSource(data_train$text))
+test_corpus <- VCorpus(VectorSource(data_test$text))
+```
+
+```{r}
+positive <- subset(data_train, polarity == "Positif")
+negative  <- subset(data_train, polarity == "Negatif")
+Netral  <- subset(data_train, polarity == "Netral")
+
+
+wordcloud(positive$text, max.words = 60,  colors = "green")
+wordcloud(Netral$text, max.words = 60, )
+wordcloud(negative$text, max.words = 60, colors = "red")
+
+
+```
+
+```{r}
+
+train_dtm <- DocumentTermMatrix(train_corpus, control = list(
+  tolower = TRUE,
+  removeNumbers = TRUE,
+  removePunctuation = TRUE,
+  stemming = TRUE
+))
+
+test_dtm <- DocumentTermMatrix(test_corpus, control = list(
+  tolower = TRUE,
+  removeNumbers = TRUE,
+  removePunctuation = TRUE,
+  stemming = TRUE
+
+
+))
+
+train_dtm
+dtm_matrix = as.matrix(test_dtm)
+```
+
+```{r}
+# fungsi untuk mengubah nilai 0 dan 1 menjadi no dan yes
+convert_counts <- function(x) {
+ case_when(x<0 ~ "Negatif" , x>0 ~ "Positif" , TRUE ~ "Netral")
+}
+
+train_dtm_binary <- apply(train_dtm,  2, convert_counts)
+test_dtm_binary  <- apply(test_dtm,   2, convert_counts)
+glimpse(train_dtm_binary)
+length(train_dtm_binary)
+```
+
+```{r}
+View(data_train)
+```
+
+```{r}
+
+data_classifier <- naiveBayes(train_dtm_binary, data_train$polarity ,laplace =0 )
+
+data_test_pred <- predict(data_classifier, test_dtm_binary)
+
+head(data_test_pred)
+library(gmodels)
+CrossTable(data_test_pred, data_test$polarity,
+           prop.chisq = FALSE, prop.t = FALSE, prop.r = FALSE,
+           dnn = c('predicted', 'actual'))
+conf <- confusionMatrix(data_test_pred, data_test$polarity)
+conf
+conf$overall['Accuracy']
+
+
+```
+
+
+```{r}
+
+View(data_classifier)
+```
+
+```{r}
+
+review <- as.character(data_labelled$text) 
+test<-get_nrc_sentiment(review ,language = "english" )
+review_combine<-cbind(review,test)
+
+barplot(colSums(test),col=rainbow(10),ylab='count',main='sentiment analisis')
+View(review_combine)
+```
+
+```{r}
+corpus<-Corpus(VectorSource(data_labelled$text))
+wordcloud(corpus,min.freq = 4, ,max.words=100,random.order=F,colors=brewer.pal(8,"Dark2"))
+
+```
+
+```{r}
+ggplot(data_labelled, aes(x=polarity)) +
+  geom_bar(aes(y=..count.., fill=polarity)) +
+  scale_fill_brewer(palette="Set1") +
+  labs(x="polarity categories", y="number of tweets") +
+  labs(title = "Analisis sentimen War Russia VS Ukraine",
+       plot.title = element_text(size=12))
+
+
+##plot ukraine
+ukraine<-data_labelled %>% filter( str_detect(text, "ukraine" ))
+ggplot(ukraine, aes(x=polarity)) +
+  geom_bar(aes(y=..count.., fill=polarity)) +
+  scale_fill_brewer(palette="Set1") +
+  labs(x="polarity categories", y="number of tweets") +
+  labs(title = "Analisis Sentimen ukraine",
+       plot.title = element_text(size=12))
+
+
+
+##plot russia
+russia<-data_labelled %>% filter(str_detect(text, "russia"))
+ggplot(russia, aes(x=polarity)) +
+  geom_bar(aes(y=..count.., fill=polarity)) +
+  scale_fill_brewer(palette="Set1") +
+  labs(x="polarity categories", y="number of tweets") +
+  labs(title = "Analisis Sentimen russia",
+       plot.title = element_text(size=12))
+
+
+
+
+
+```
+
+```{r}
+{
+  dtm<-TermDocumentMatrix(data_labelled)
+  m<-as.matrix(dtm)
+  v<-sort(rowSums(m),decreasing = TRUE)
+  tweetMentah<-data.frame(word=names(v),frekuensi=v)
+}
+
+batas<-head(tweetMentah,n=10)
+df<-batas %>% ggplot(aes(x=frekuensi, y=word ,fill=word)) + geom_col()+theme(legend.position = "none" )
+df
+```
+
+```{r}
+library(shiny)
+library(shinydashboard)
+library(here)
+library(vroom)
+library(dplyr)
+library(SnowballC)
+library(ggplot2)
+library(plotly)
+library(DT)
+library(sass)
+library(ECharts2Shiny)
+library(wordcloud)
+library(tm)
+library(RColorBrewer)
+library(memoise)
+label<-vroom(here("Labeling war rvs.csv"))
+ukraine1<-vroom(here("ukraine.csv"))
+russia1<-vroom(here("russia.csv"))
+warrvu<-vroom(here("data-raw.csv"))
+labelwc<-data.frame(label)
+labelwc.Corpus<-Corpus(VectorSource((labelwc$text)))
+labelwc.Clean<-tm_map(labelwc.Corpus, PlainTextDocument)
+labelwc.Clean<-tm_map(labelwc.Corpus,tolower)
+labelwc.Clean<-tm_map(labelwc.Clean,removeNumbers)
+labelwc.Clean<-tm_map(labelwc.Clean,removeWords,stopwords("english"))
+labelwc.Clean<-tm_map(labelwc.Clean,removePunctuation)
+labelwc.Clean<-tm_map(labelwc.Clean,stripWhitespace)
+labelwc.Clean<-tm_map(labelwc.Clean,stemDocument)
+df <- data.frame(table(label$polarity))
+ukraine1<- ukraine1[c(1,2,4,6,9)]
+russia1<- russia1[c(1,2,4,6,9)]
+warrvu<- warrvu[c(1,2,4,6,9)]
+
+```
+
+```{r}
+
+
+labelwc.Corpus<-Corpus(VectorSource(labelwc$text))
+ui <- dashboardPage(
+  dashboardHeader(title = "War Russia Versus Ukraine"),
+  dashboardSidebar(sidebarMenu(
+      menuItem("Labeling", tabName = "Labeling", icon = icon("dashboard")),
+      menuItem("Scatter Plot ", tabName = "Emotions", icon = icon("dashboard")),
+       menuItem("Word  cloud", tabName = "Word", icon = icon("dashboard")),
+      menuItem("Data  Tweet", tabName = "db", icon = icon("dashboard"))
+    
+    )),
+  
+  dashboardBody(
+    tabItems(
+      #TAB !
+      tabItem(tabName = "Labeling",h2("Analisis Perang Rusia dan Ukraina"),
+        fluidRow(
+          box(height = 600, width = 6,title = "Histogram russia",
+        plotOutput('his1'),
+      ), 
+      box(height = 600, width = 6,title = "Histogram ukraine",
+        plotOutput('his2'),
+      ),
+      box(height = 600, width = 6,title = "Histogram public response",
+           plotOutput("his3"),
+        ),
+       
+  
+        )
+      ),
+      tabItem(tabName = "Scatter Plot",h2("Scatter Plot"),
+        fluidRow(
+        box(height = 600, width = 6,title = "Histogram Scatter plot",
+           plotOutput("emos1"),
+        ),
+       
+      ),
+         
+        ),
+       
+      # TAB !
+      tabItem(tabName = "Word",h2("Visualisasi Word"),
+        fluidRow(
+                 box(title = "WordCloud Pilpres",
+         plotOutput("plot"),
+),
+          box(
+            title = "Controls",
+             sliderInput("freq",
+                  "Minimum Frequency:",
+                  min = 1,  max = 100, value = 15),
+             sliderInput("max",
+                  "Maximum Number of Words:",
+                  min = 1,  max = 1000,  value = 100)
+          ),
+
+   box(height = 600, width = 10,title = "10 Kata Teratas",
+           plotOutput("plot2"),
+         ),
+        
+),
+         
+        ),
+
+      # TAB2
+      tabItem(tabName = "db",
+        h4("Database Tanggapan"),
+       fluidRow(tabBox(id="tabchart1",
+                 tabPanel("ukraineRaw",DT::dataTableOutput("Tab1", height = "700px"), width = 9),
+                 tabPanel("russiaRaw",DT::dataTableOutput("Tab2", height = "700px"), width = 9),
+                 tabPanel("DataLabeling",DT::dataTableOutput("Tab3", height = "700px"), width = 9),
+                 tabPanel("UmumRaw",DT::dataTableOutput("Tab4", height = "700px"), width = 9),
+                
+                 width = 12)),
+      )
+      
+ 
+    )
+  )
+)
+
+```
+
+
+```{r server}
+server<-shinyServer(function(input, output,session){
+output$his1 <- renderPlot({
+  ggplot(russia, aes(x=polarity)) +
+  geom_bar(aes(y=..count.., fill=polarity)) +
+  scale_fill_brewer(palette="Set1") +
+  labs(x="polarity categories", y="number of tweets") +
+  labs(title = "Analisis sentimen russia",
+       plot.title = element_text(size=12))
+})
+output$his2 <- renderPlot({
+
+ggplot(ukraine, aes(x=polarity)) +
+  geom_bar(aes(y=..count.., fill=polarity)) +
+  scale_fill_brewer(palette="Set1") +
+  labs(x="polarity categories", y="number of tweets") +
+  labs(title = "Analisis sentimen Ukraine",
+       plot.title = element_text(size=12))
+})
+
+
+output$his3 <- renderPlot({
+ ggplot(hasil, aes(x=polarity)) +
+  geom_bar(aes(y=..count.., fill=polarity)) +
+  scale_fill_brewer(palette="Set1") +
+  labs(x="polarity categories", y="number of tweets") +
+  labs(title = "Analisis sentimen war russia vs ukraine",
+       plot.title = element_text(size=12))
+})
+output$emos1 <- renderPlot({
+  barplot(colSums(s),col=rainbow(10),ylab='count',main='sentiment analisis')
+})
+  
+  output$plot  <- renderPlot({wordcloud(words = labelwc.Clean,scale=c(4,0.5), min.freq = input$freq,
+          max.words=input$max,
+          colors=brewer.pal(8, "Dark2"))
+ })
+  
+  output$plot2 <- renderPlot({
+  ggplot(batas,aes(x=freq, y=word ,fill=word)) + geom_col()+theme(legend.position = "none" )
+
+
+    
+  })
+  
+  #data tweet
+   output$Tab1 <- DT::renderDataTable(DT::datatable({
+    data <-ukraine1 }))
+   output$Tab2 <- DT::renderDataTable(DT::datatable({
+    data <-russia1 }))
+   output$Tab3 <- DT::renderDataTable(DT::datatable({
+    data <-label }))
+   output$Tab4 <- DT::renderDataTable(DT::datatable({
+    data <-warrvu }))
+})
+```
+
+```{r run-app}
+shinyApp(ui, server)
+```
